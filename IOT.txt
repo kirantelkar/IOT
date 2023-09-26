@@ -1,0 +1,202 @@
+#include <SoftwareSerial.h>
+#include <stdlib.h>
+
+#define echoPin 3 // attach pin D8 Arduino to pin Echo of HC-SR04
+#define trigPin 2 // attach pin D9 Arduino to pin Trig of HC-SR04
+#define raindropPin 4
+#define buzzer 5 // attached pin D11 Arduino to pin Buzzer VCC
+#define vibrator 6 // attached pin D12 Arduino to pin Vibrator VCC
+#define buttonPin 7 // attached pin D13 Arduino to button pin
+
+SoftwareSerial gpsSerial(9, 8);  // RX, TX connect TX, RX
+
+// Configure software serial communication
+SoftwareSerial sim800a(11, 10);  // RX, TX
+
+// Declare functions
+void sendSMS(String message);
+void activateBuzzer(unsigned long duration);
+void activateVibrator(unsigned long duration);
+void displayGPSLocation();
+
+// Constants
+const unsigned long buzzerDuration = 100; // Duration for buzzer tone
+const unsigned long vibratorDuration = 100; // Duration for vibrator activation
+const unsigned long sensorCheckInterval = 1000; // Interval for checking sensor values (1 second)
+
+String url;
+
+// Variables
+long duration; // variable for the duration of sound wave travel
+int distance; // variable for the distance measurement
+unsigned long previousSensorCheckTime = 0; // variable to store the previous sensor check time
+
+void setup() {
+  pinMode(trigPin, OUTPUT); // Sets the trigPin as an OUTPUT
+  pinMode(echoPin, INPUT); // Sets the echoPin as an INPUT
+  pinMode(buzzer, OUTPUT);
+  pinMode(raindropPin, INPUT);
+  pinMode(vibrator, OUTPUT);
+  pinMode(buttonPin, INPUT_PULLUP); // Set button pin as INPUT with internal pull-up resistor
+  Serial.begin(9600); // Serial monitor baud rate
+  gpsSerial.begin(9600); // GPS module baud rate
+
+  
+  Serial.begin(9600); // Initialize serial communication with PC
+  sim800a.begin(9600); // Initialize SIM800A communication
+
+}
+
+void loop() {
+    // Check for incoming call and send SMS
+  if (sim800a.available()) {
+    String response = sim800a.readStringUntil('\n');
+    if (response.indexOf("RING") != -1) {
+       // Incoming CALL detected
+       Serial.println("Incoming CALL detected.");
+       
+      // Incoming call detected, send SMS with "Location" message
+      sendSMS("location : https://goo.gl/maps/KLz2KEAd3v7pZUPq8");
+    }
+  }
+
+  // Check for incoming SMS
+  if (sim800a.available()) {
+    String response = sim800a.readStringUntil('\n');
+    if (response.indexOf("CMT") != -1) {
+      Serial.println("Incoming SMS detected.");
+      // Read the received message (in the next line after CMT notification)
+      String message = sim800a.readStringUntil('\n');
+      Serial.println("Received Message: " + message);
+      sendSMS("location : https://goo.gl/maps/KLz2KEAd3v7pZUPq8"); // Call sendSMS function
+      // Process the received message as needed
+    }
+  }
+
+  // Check if it's time to check the sensor values
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousSensorCheckTime >= sensorCheckInterval) {
+    previousSensorCheckTime = currentMillis;
+
+    // Read the digital value from the raindrop sensor
+    int sensorValue = digitalRead(raindropPin);
+
+    // Check if the sensor value indicates water presence
+    if (sensorValue == LOW) {
+      // Water detected
+      Serial.println("Water detected!");
+      activateBuzzer(1000); // Activate buzzer for 1 second
+      activateVibrator(100); // Activate vibrator for 100ms
+    }
+
+    // Clears the trigPin condition
+    digitalWrite(trigPin, LOW);
+    delayMicroseconds(2);
+    // Sets the trigPin HIGH (ACTIVE) for 10 microseconds
+    digitalWrite(trigPin, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(trigPin, LOW);
+
+    // Reads the echoPin, returns the sound wave travel time in microseconds
+    duration = pulseIn(echoPin, HIGH);
+
+    // Calculating the distance
+    distance = duration * 0.034 / 2; // Speed of sound wave divided by 2 (go and back)
+    // Displays the distance on the Serial Monitor
+    Serial.print("Distance: ");
+    Serial.print(distance);
+    Serial.println(" cm");
+
+    // Check the distance and activate buzzer/vibrator accordingly
+    if (distance <= 100 && distance >= 60) {
+      activateBuzzer(100); // Activate buzzer for 100ms
+      activateVibrator(100); // Activate vibrator for 100ms
+    } else if (distance <= 59 && distance >= 40) {
+      activateBuzzer(200); // Activate buzzer for 200ms
+      activateVibrator(200); // Activate vibrator for 200ms
+    } else if (distance <= 39 && distance >= 20) {
+      activateBuzzer(400); // Activate buzzer for 400ms
+      activateVibrator(400); // Activate vibrator for 400ms
+    } else if (distance <= 19) {
+      activateBuzzer(800); // Activate buzzer for 800ms
+      activateVibrator(800); // Activate vibrator for 100ms
+    } else if (distance == 0) {
+    }
+  }
+
+  // Check the button state
+  if (digitalRead(buttonPin) == LOW) {
+    // Button is pressed, display GPS location and send SMS
+    //displayGPSLocation();
+    sendSMS("Trouble at location : https://goo.gl/maps/KLz2KEAd3v7pZUPq8");
+  }
+
+  // GPS Code
+ 
+  
+ if(gpsSerial.available()) {
+    String sentence = gpsSerial.readStringUntil('\n');
+    if (sentence.startsWith("$GPGGA")) {
+      // Split the sentence into individual fields
+      String fields[15];
+      int fieldCount = 0;
+      int startIndex = 0;
+      for (int i = 0; i < sentence.length(); i++) {
+        if (sentence.charAt(i) == ',') {
+          fields[fieldCount] = sentence.substring(startIndex, i);
+          fieldCount++;
+          startIndex = i + 1;
+        }
+      }
+
+      // Extract latitude and longitude
+      String latitude = fields[2];
+      String longitude = fields[4];
+
+      // Print latitude and longitude
+      float lon = atof(longitude.c_str()) / 100;
+      float latu = atof(latitude.c_str()) / 100;
+
+      // Concatenate the string values and store them in the 'url' variable
+      url = "https://goo.gl/maps/";
+      url += String(latu, 7);
+      url += ",";
+      url += String(lon, 7);
+      url += ",15z";
+
+      // Print the GPS location to the serial monitor
+      Serial.println(url);
+    }
+  }
+}
+
+// Function to activate the buzzer for a specified duration
+void activateBuzzer(unsigned long duration) {
+  digitalWrite(buzzer, HIGH);
+  delay(duration);
+  digitalWrite(buzzer, LOW);
+}
+
+// Function to activate the vibrator for a specified duration
+void activateVibrator(unsigned long duration) {
+  digitalWrite(vibrator, HIGH);
+  delay(duration);
+  digitalWrite(vibrator, LOW);
+}
+
+// Function to display GPS location
+void displayGPSLocation() {
+  // Print the GPS location to the serial monitor
+  Serial.println(url);
+}
+
+void sendSMS(String message) {
+  sim800a.println("AT+CMGF=1"); // Set the GSM module to SMS mode
+  delay(100);
+  sim800a.println("AT+CMGS=\"+919113917995\""); // Replace +1234567890 with the recipient's phone number
+  delay(100);
+  sim800a.println(message); // The content of the message
+  delay(100);
+  sim800a.println((char)26); // ASCII code of CTRL+Z to send the message
+  delay(1000);
+}
